@@ -1,0 +1,21 @@
+# Root safety net for the monorepo. Sub-projects have their own .gitignore too.
+
+# Never commit secrets — match .env anywhere, but keep .env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+**/venv/
+**/__pycache__/
+*.pyc
+
+# Node
+**/node_modules/
+**/dist/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
