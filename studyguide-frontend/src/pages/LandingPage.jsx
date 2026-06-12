@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   BookOpenText, GitBranch, ArrowRight, ChevronDown,
@@ -43,6 +43,7 @@ function TopBar({ navigate }) {
     <div
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 12,
         padding: '22px clamp(20px, 5vw, 56px)', maxWidth: 1200, margin: '0 auto',
       }}
     >
@@ -83,8 +84,10 @@ function Typewriter() {
     } else if (deleting && text.length > 0) {
       t = setTimeout(() => setText(current.slice(0, text.length - 1)), 40)
     } else {
-      setDeleting(false)
-      setI((p) => (p + 1) % SOURCES.length)
+      t = setTimeout(() => {
+        setDeleting(false)
+        setI((p) => (p + 1) % SOURCES.length)
+      }, 300)
     }
     return () => clearTimeout(t)
   }, [text, deleting, i])

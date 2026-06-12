@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useIsMobile } from '../utils/useIsMobile'
 
 export function Button({ children, variant = 'primary', style, ...props }) {
   const base = {
@@ -183,8 +184,9 @@ export function SetSwitcher({ sets, active, onSelect }) {
 }
 
 export function PageTitle({ overline, title, subtitle }) {
+  const isMobile = useIsMobile()
   return (
-    <div style={{ marginBottom: 28 }}>
+    <div style={{ marginBottom: isMobile ? 20 : 28 }}>
       {overline && (
         <div
           style={{
@@ -199,11 +201,11 @@ export function PageTitle({ overline, title, subtitle }) {
           {overline}
         </div>
       )}
-      <h1 style={{ margin: 0, fontSize: 34, fontWeight: 600, color: 'var(--text-dark)' }}>
+      <h1 style={{ margin: 0, fontSize: isMobile ? 26 : 34, fontWeight: 600, color: 'var(--text-dark)', lineHeight: 1.2 }}>
         {title}
       </h1>
       {subtitle && (
-        <p style={{ marginTop: 8, color: 'var(--text-mid)', fontSize: 15 }}>{subtitle}</p>
+        <p style={{ marginTop: 8, color: 'var(--text-mid)', fontSize: isMobile ? 14 : 15 }}>{subtitle}</p>
       )}
     </div>
   )

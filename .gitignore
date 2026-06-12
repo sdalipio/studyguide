@@ -19,3 +19,6 @@
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code project guidance — kept local, not shipped in the repo
+CLAUDE.md
