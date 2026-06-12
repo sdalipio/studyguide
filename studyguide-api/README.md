@@ -83,12 +83,15 @@ dependency injection — it hands you the session and closes it afterward).
 Five tables. Each class is a table; each attribute is a column.
 
 - **Document** — one uploaded file. `title`, `source_type` (`pdf`/`docx`),
-  `status` (`processing`/`ready`/`error`), `topic_method` (`outline`/`ai`).
+  `status` (`processing`/`ready`/`error`), `topic_method` (`outline`/`ai`), and
+  `progress` (0–100) + `stage` (a short label) that the ingest pipeline updates so the UI
+  can show a live progress bar.
 - **Topic** — a studyable section of a document.
 - **Chunk** — a small passage. Holds `content`, `location` (`"p. 33"` / `"§ Heading"`,
   used for citations), and `embedding` — a **`Vector(384)`** used for similarity search.
 - **Flashcard** — a question/answer pair for a topic.
-- **QuizQuestion** — `question`, `options`, `correct_index`, `explanation`.
+- **QuizQuestion** — `question`, `options`, `correct_indices` (0-based; one index for a
+  normal question, two+ for a "select all that apply" question), `explanation`.
 
 Relationships use **cascade delete**: delete a Document and its Topics/Chunks/Flashcards/
 QuizQuestions go with it. Tables are created on startup by `init_db()` in `db.py`, which
@@ -102,18 +105,19 @@ On upload, `documents.py` saves a `Document` (status `processing`) and returns
 immediately, then runs `process_document` in the **background**:
 
 ```
-parse the file (parsers.py)
-  -> detect topics (topics.py)
+parse the file (parsers.py)            -> progress 5%  "Reading document"
+  -> detect topics (topics.py)          -> progress 15% "Organizing topics"
      -> for each topic:
           split text into ~800-token chunks (with overlap)
-          embed all chunks at once (embeddings.py)
+          embed in batches (embeddings.py), advancing 15% -> 95%  "Embedding passages"
           save chunks + vectors to the DB
-  -> mark the document "ready"
+  -> mark the document "ready"           -> progress 100%
 ```
 
 **Chunking** cuts text into bite-sized pieces (~800 tokens, ~120 overlap so sentences
-split across a boundary aren't lost). The frontend polls `GET /api/documents/{id}` until
-`status` is `ready`.
+split across a boundary aren't lost). As it runs, `process_document` updates the
+document's `progress`/`stage` (committing each step) so the UI shows a live bar. The
+frontend polls `GET /api/documents/{id}` until `status` is `ready`.
 
 ---
 
@@ -194,12 +198,15 @@ gather the topic's chunk text -> ask the LLM (structured JSON) -> save to DB (ca
 
 - **Caching:** `get_or_create_*` returns saved rows if they exist — revisiting a topic
   is instant and free.
-- **Generate more:** `generate_more_*` makes a *new* batch, passing existing questions to
-  the LLM with "don't repeat these" at a higher temperature for variety; new items are
-  appended so the study bank grows.
-- **Quiz scoring** (`POST /quiz/score`): the frontend sends `{question_id: chosen_index}`;
-  the server compares each to the stored `correct_index` and returns the score for that
-  round.
+- **Sets / "Generate new set":** each generation is a numbered **set** (`set_index`,
+  1-based). `generate_more_*` makes a *new* set of all-new items — it passes every existing
+  question to the LLM with "don't repeat these" at a higher temperature for variety, and
+  stamps the new rows with the next set number. The frontend shows one set at a time with a
+  switcher to revisit earlier sets for review.
+- **Quiz scoring** (`POST /quiz/score`): the frontend sends `{question_id: [chosen_index, ...]}`;
+  the server marks a question correct only if the chosen set exactly matches the stored
+  `correct_indices` (all-or-nothing, so "select all that apply" works), and returns the
+  score for that round.
 
 ---
 

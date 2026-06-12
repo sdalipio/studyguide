@@ -11,6 +11,8 @@ class DocumentOut(BaseModel):
     page_count: int
     status: str
     topic_method: str | None = None
+    progress: int = 0
+    stage: str | None = None
     error: str | None = None
     created_at: datetime
 
@@ -54,6 +56,7 @@ class FlashcardOut(BaseModel):
     id: int
     question: str
     answer: str
+    set_index: int = 1
 
     class Config:
         from_attributes = True
@@ -63,15 +66,16 @@ class QuizQuestionOut(BaseModel):
     id: int
     question: str
     options: list[str]
-    correct_index: int
+    correct_indices: list[int]  # length 1 = single answer; >= 2 = SATA
     explanation: str | None = None
+    set_index: int = 1
 
     class Config:
         from_attributes = True
 
 
 class ScoreRequest(BaseModel):
-    answers: dict[int, int]  # quiz_question_id -> chosen option index
+    answers: dict[int, list[int]]  # quiz_question_id -> chosen option indices
 
 
 class ScoreResult(BaseModel):

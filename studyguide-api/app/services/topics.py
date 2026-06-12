@@ -29,11 +29,41 @@ class TopicSlice:
 MIN_TOPICS = 3
 MAX_TOPICS = 12
 
+# Outline entries this short are page/section dividers (e.g. a "Unit I" title
+# page), not studyable topics -> skip them.
+MIN_TOPIC_WORDS = 50
+
+# Front-/back-matter outline entries that aren't real study content. Matched
+# case-insensitively against the whole title (exact) or its start (prefix).
+_MATTER_EXACT = {
+    "title", "title page", "half title", "copyright", "copyright page",
+    "dedication", "epigraph", "contributors", "contributor", "preface",
+    "foreword", "contents", "table of contents", "index",
+    "references", "bibliography", "glossary", "notice", "notices",
+    "reviewers", "credits", "colophon", "frontmatter", "front matter",
+    "acknowledgement", "acknowledgements", "acknowledgment", "acknowledgments",
+}
+_MATTER_PREFIX = (
+    "about the author", "acknowledg", "how to use", "list of ", "index of ",
+    "table of contents",
+)
+
+
+def _is_front_back_matter(title: str) -> bool:
+    t = " ".join(title.lower().split())
+    return t in _MATTER_EXACT or any(t.startswith(p) for p in _MATTER_PREFIX)
+
+
+def _word_count(segments: list[Segment]) -> int:
+    return sum(len(s.text.split()) for s in segments)
+
 
 def detect_topics(parsed: ParsedDoc) -> tuple[str, list[TopicSlice]]:
     """Returns (topic_method, topic_slices)."""
     if _has_usable_toc(parsed):
-        return "outline", _topics_from_toc(parsed)
+        slices = _topics_from_toc(parsed)
+        if slices:  # filtering may strip everything if the TOC was all matter
+            return "outline", slices
     return "ai", _topics_from_semantics(parsed)
 
 
@@ -47,22 +77,22 @@ def _topics_from_toc(parsed: ParsedDoc) -> list[TopicSlice]:
     entries = sorted(
         {t.seg_index: t.title for t in parsed.toc}.items()
     )  # list[(seg_index, title)]
-    boundaries = [idx for idx, _ in entries]
-    titles = [title for _, title in entries]
 
-    # Content before the first heading is folded into the first topic.
-    if boundaries[0] > 0:
-        boundaries[0] = 0
-
+    # Every entry is a boundary (so a skipped section still bounds its
+    # neighbours, keeping its text out of the surrounding topics), but only
+    # real content entries are emitted as topics. Front-/back-matter (Title,
+    # Copyright, Preface, References, ...) and divider pages are dropped.
     slices: list[TopicSlice] = []
-    for i, start in enumerate(boundaries):
-        end = boundaries[i + 1] if i + 1 < len(boundaries) else len(parsed.segments)
+    for i, (start, title) in enumerate(entries):
+        end = entries[i + 1][0] if i + 1 < len(entries) else len(parsed.segments)
+        if _is_front_back_matter(title):
+            continue
         segs = parsed.segments[start:end]
-        if not segs:
+        if _word_count(segs) < MIN_TOPIC_WORDS:
             continue
         slices.append(
             TopicSlice(
-                title=titles[i],
+                title=title,
                 order_index=len(slices),
                 segments=segs,
                 start_pos=start,

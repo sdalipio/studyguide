@@ -16,6 +16,17 @@ from app.services import embeddings
 # chunk_size/overlap are expressed in tokens; ~4 chars per token is a fine proxy.
 _CHARS_PER_TOKEN = 4
 
+# How many chunks to embed per batch. Smaller = smoother progress bar; larger =
+# fewer DB commits. 64 is a good balance even for very large chapters.
+EMBED_BATCH = 64
+
+
+def _set_progress(db, doc: Document, pct: int, stage: str | None) -> None:
+    """Record ingestion progress and commit so the polling GET can see it."""
+    doc.progress = pct
+    doc.stage = stage
+    db.commit()
+
 
 def _chunk_segments(segments: list[Segment]) -> list[tuple[str, str]]:
     """Split a topic's segments into (text, location) chunks."""
@@ -53,8 +64,11 @@ def process_document(doc_id: int, filename: str, data: bytes) -> None:
 
         parsed = parse_file(filename, data)
         doc.page_count = parsed.page_count
+        _set_progress(db, doc, 5, "Reading document")
+
         method, slices = detect_topics(parsed)
         doc.topic_method = method
+        _set_progress(db, doc, 15, "Organizing topics")
 
         if not slices:
             doc.status = "error"
@@ -62,7 +76,13 @@ def process_document(doc_id: int, filename: str, data: bytes) -> None:
             db.commit()
             return
 
-        for sl in slices:
+        # Pre-chunk every topic first so we know the total work, then embed in
+        # batches and advance the bar from 15% -> 95% as chunks are embedded.
+        topic_plans = [(sl, _chunk_segments(sl.segments)) for sl in slices]
+        total_chunks = sum(len(pairs) for _, pairs in topic_plans) or 1
+        done = 0
+
+        for sl, pairs in topic_plans:
             topic = Topic(
                 document_id=doc.id,
                 title=sl.title,
@@ -73,23 +93,24 @@ def process_document(doc_id: int, filename: str, data: bytes) -> None:
             db.add(topic)
             db.flush()  # assign topic.id
 
-            pairs = _chunk_segments(sl.segments)
-            if not pairs:
-                continue
-            vectors = embeddings.embed_texts([p[0] for p in pairs])
-            for (content, location), vec in zip(pairs, vectors):
-                db.add(
-                    Chunk(
-                        document_id=doc.id,
-                        topic_id=topic.id,
-                        content=content,
-                        location=location,
-                        embedding=vec,
+            for start in range(0, len(pairs), EMBED_BATCH):
+                batch = pairs[start : start + EMBED_BATCH]
+                vectors = embeddings.embed_texts([p[0] for p in batch])
+                for (content, location), vec in zip(batch, vectors):
+                    db.add(
+                        Chunk(
+                            document_id=doc.id,
+                            topic_id=topic.id,
+                            content=content,
+                            location=location,
+                            embedding=vec,
+                        )
                     )
-                )
+                done += len(batch)
+                _set_progress(db, doc, 15 + int(80 * done / total_chunks), "Embedding passages")
 
         doc.status = "ready"
-        db.commit()
+        _set_progress(db, doc, 100, None)
     except Exception as exc:  # noqa: BLE001 - record failure for the UI
         db.rollback()
         doc = db.get(Document, doc_id)

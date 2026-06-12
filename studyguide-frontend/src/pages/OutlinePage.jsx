@@ -32,7 +32,7 @@ export default function OutlinePage() {
 
   return (
     <PageTransition>
-      <BackLink to="/">Library</BackLink>
+      <BackLink to="/library">Library</BackLink>
       <PageTitle
         overline="Table of Contents"
         title={doc?.title || 'Loading…'}

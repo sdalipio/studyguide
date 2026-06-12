@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { UploadCloud, FileText, FileType2, Trash2, Loader2, AlertCircle } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
-import { Card, PageTitle } from '../components/ui'
+import { Card, PageTitle, ProgressBar, ConfirmDialog } from '../components/ui'
 import { useDocuments } from '../context/DocumentContext'
 import { uploadDocument, deleteDocument } from '../services/apiService'
 
@@ -11,6 +11,8 @@ export default function LibraryPage() {
   const { documents, refresh } = useDocuments()
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadPct, setUploadPct] = useState(0)
+  const [confirmId, setConfirmId] = useState(null)
   const [error, setError] = useState('')
   const inputRef = useRef(null)
   const navigate = useNavigate()
@@ -18,7 +20,7 @@ export default function LibraryPage() {
   // Poll while any document is still processing.
   useEffect(() => {
     if (!documents.some((d) => d.status === 'processing')) return
-    const id = setInterval(refresh, 2000)
+    const id = setInterval(refresh, 1500)
     return () => clearInterval(id)
   }, [documents, refresh])
 
@@ -26,9 +28,10 @@ export default function LibraryPage() {
     const file = files?.[0]
     if (!file) return
     setError('')
+    setUploadPct(0)
     setUploading(true)
     try {
-      await uploadDocument(file)
+      await uploadDocument(file, setUploadPct)
       await refresh()
     } catch (e) {
       setError(e?.response?.data?.detail || 'Upload failed. Use a .pdf or .docx file.')
@@ -37,8 +40,12 @@ export default function LibraryPage() {
     }
   }
 
-  async function handleDelete(e, id) {
-    e.stopPropagation()
+  const confirmDoc = documents.find((d) => d.id === confirmId)
+
+  async function confirmDelete() {
+    const id = confirmId
+    setConfirmId(null)
+    if (id == null) return
     await deleteDocument(id)
     refresh()
   }
@@ -88,11 +95,17 @@ export default function LibraryPage() {
             <UploadCloud size={34} color="var(--primary)" />
           )}
           <div style={{ fontFamily: 'var(--serif)', fontSize: 19, color: 'var(--text-dark)' }}>
-            {uploading ? 'Uploading…' : 'Drop a document here'}
+            {uploading ? `Uploading… ${uploadPct}%` : 'Drop a document here'}
           </div>
-          <div style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>
-            PDF or Word (.docx) · click to browse
-          </div>
+          {uploading ? (
+            <div style={{ width: 240, maxWidth: '80%' }}>
+              <ProgressBar value={uploadPct} />
+            </div>
+          ) : (
+            <div style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>
+              PDF or Word (.docx) · click to browse
+            </div>
+          )}
         </div>
       </div>
 
@@ -133,7 +146,10 @@ export default function LibraryPage() {
                   <FileType2 size={26} color="var(--info)" />
                 )}
                 <button
-                  onClick={(e) => handleDelete(e, doc.id)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setConfirmId(doc.id)
+                  }}
                   style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}
                   title="Delete"
                 >
@@ -151,6 +167,19 @@ export default function LibraryPage() {
         ))}
       </div>
 
+      <ConfirmDialog
+        open={confirmId != null}
+        title="Delete this document?"
+        message={
+          confirmDoc
+            ? `“${confirmDoc.title}” and all of its topics, chats, flashcards and quizzes will be permanently removed.`
+            : ''
+        }
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setConfirmId(null)}
+      />
+
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </PageTransition>
   )
@@ -159,9 +188,13 @@ export default function LibraryPage() {
 function StatusBadge({ doc }) {
   if (doc.status === 'processing') {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
-        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Analyzing…
-      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
+          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+          {doc.stage || 'Analyzing…'}{doc.progress ? ` · ${doc.progress}%` : ''}
+        </span>
+        <ProgressBar value={doc.progress || 0} />
+      </div>
     )
   }
   if (doc.status === 'error') {

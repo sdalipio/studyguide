@@ -3,25 +3,41 @@ import { useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, RotateCw, Shuffle, Plus, Loader2 } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
-import { BackLink, PageTitle, SkeletonLines, Card, Button } from '../components/ui'
+import { BackLink, PageTitle, SkeletonLines, Card, Button, SetSwitcher } from '../components/ui'
 import { getTopic, getFlashcards, generateMoreFlashcards } from '../services/apiService'
 import { shuffle } from '../utils/shuffle'
+import { setNumbers } from '../utils/sets'
+
+const cardsInSet = (all, n) => all.filter((c) => (c.set_index || 1) === n)
 
 export default function FlashcardsPage() {
   const { topicId } = useParams()
   const [topic, setTopic] = useState(null)
-  const [cards, setCards] = useState([])
+  const [cards, setCards] = useState([])   // every card across all sets
+  const [activeSet, setActiveSet] = useState(1)
+  const [view, setView] = useState([])     // the active set's cards, shuffled
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
 
+  // Load all cards and open the newest set.
+  function openNewest(all) {
+    const sets = setNumbers(all)
+    const newest = sets[sets.length - 1] || 1
+    setCards(all)
+    setActiveSet(newest)
+    setView(shuffle(cardsInSet(all, newest)))
+    setIndex(0)
+    setFlipped(false)
+  }
+
   useEffect(() => {
     let active = true
     getTopic(topicId).then((t) => active && setTopic(t)).catch(() => {})
     getFlashcards(topicId)
-      .then((d) => active && setCards(shuffle(d)))
+      .then((d) => active && openNewest(d))
       .catch(() => active && setError('Could not generate flashcards. Is the Groq API key set?'))
       .finally(() => active && setLoading(false))
     return () => {
@@ -31,11 +47,18 @@ export default function FlashcardsPage() {
 
   function go(dir) {
     setFlipped(false)
-    setIndex((i) => Math.min(Math.max(i + dir, 0), cards.length - 1))
+    setIndex((i) => Math.min(Math.max(i + dir, 0), view.length - 1))
+  }
+
+  function selectSet(n) {
+    setActiveSet(n)
+    setView(shuffle(cardsInSet(cards, n)))
+    setIndex(0)
+    setFlipped(false)
   }
 
   function doShuffle() {
-    setCards((c) => shuffle(c))
+    setView((v) => shuffle(v))
     setIndex(0)
     setFlipped(false)
   }
@@ -43,10 +66,7 @@ export default function FlashcardsPage() {
   async function doGenerateMore() {
     setGenerating(true)
     try {
-      const all = await generateMoreFlashcards(topicId)
-      setCards(shuffle(all))
-      setIndex(0)
-      setFlipped(false)
+      openNewest(await generateMoreFlashcards(topicId))
     } catch {
       setError('Could not generate more cards. Is the Groq API key set?')
     } finally {
@@ -54,7 +74,8 @@ export default function FlashcardsPage() {
     }
   }
 
-  const card = cards[index]
+  const card = view[index]
+  const sets = setNumbers(cards)
 
   return (
     <PageTransition>
@@ -62,7 +83,11 @@ export default function FlashcardsPage() {
       <PageTitle
         overline="Flashcards"
         title={topic?.title || 'Loading…'}
-        subtitle={cards.length ? `Card ${index + 1} of ${cards.length} · click to flip` : undefined}
+        subtitle={
+          view.length
+            ? `Set ${activeSet} of ${sets.length} · card ${index + 1} of ${view.length} · click to flip`
+            : undefined
+        }
       />
 
       {loading ? (
@@ -71,6 +96,7 @@ export default function FlashcardsPage() {
         <Card><div style={{ color: 'var(--danger)' }}>{error}</div></Card>
       ) : (
         <>
+          <SetSwitcher sets={sets} active={activeSet} onSelect={selectSet} />
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginBottom: 16 }}>
             <Button variant="ghost" onClick={doShuffle}>
               <Shuffle size={15} /> Shuffle
@@ -81,7 +107,7 @@ export default function FlashcardsPage() {
               ) : (
                 <Plus size={15} />
               )}
-              {generating ? 'Generating…' : 'Generate more'}
+              {generating ? 'Generating…' : 'Generate new set'}
             </Button>
           </div>
 
@@ -118,7 +144,7 @@ export default function FlashcardsPage() {
               <ChevronLeft size={17} /> Prev
             </Button>
             <div style={{ display: 'flex', gap: 6 }}>
-              {cards.map((_, i) => (
+              {view.map((_, i) => (
                 <div
                   key={i}
                   style={{
@@ -130,15 +156,15 @@ export default function FlashcardsPage() {
                 />
               ))}
             </div>
-            <Button variant="ghost" onClick={() => go(1)} disabled={index === cards.length - 1} style={{ opacity: index === cards.length - 1 ? 0.5 : 1 }}>
+            <Button variant="ghost" onClick={() => go(1)} disabled={index === view.length - 1} style={{ opacity: index === view.length - 1 ? 0.5 : 1 }}>
               Next <ChevronRight size={17} />
             </Button>
           </div>
 
-          {index === cards.length - 1 && (
+          {index === view.length - 1 && (
             <div style={{ textAlign: 'center', marginTop: 18, color: 'var(--text-muted)', fontSize: 13.5 }}>
-              You've reached the end — <strong>Shuffle</strong> to review again, or{' '}
-              <strong>Generate more</strong> for new cards.
+              You've reached the end of this set — <strong>Shuffle</strong> to review again, or{' '}
+              <strong>Generate new set</strong> for fresh cards.
             </div>
           )}
         </>

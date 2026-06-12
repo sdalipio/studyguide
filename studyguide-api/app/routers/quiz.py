@@ -39,7 +39,8 @@ def score_quiz(topic_id: int, body: ScoreRequest, db: Session = Depends(get_db))
         q = questions.get(int(qid))
         if q is None:
             continue
-        is_right = int(chosen) == q.correct_index
+        # All-or-nothing: the chosen set must exactly match the correct set.
+        is_right = {int(c) for c in chosen} == set(q.correct_indices)
         results[int(qid)] = is_right
         correct += int(is_right)
 

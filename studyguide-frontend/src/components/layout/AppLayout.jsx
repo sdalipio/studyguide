@@ -52,7 +52,7 @@ export default function AppLayout({ children }) {
         </Link>
 
         <nav>
-          <NavItem to="/" active={location.pathname === '/'} icon={<Library size={17} />}>
+          <NavItem to="/library" active={location.pathname === '/library'} icon={<Library size={17} />}>
             Library
           </NavItem>
         </nav>

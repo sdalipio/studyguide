@@ -30,6 +30,9 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="processing")  # processing|ready|error
     topic_method: Mapped[str | None] = mapped_column(String(16), nullable=True)  # outline|ai
+    # Ingestion progress for the UI: 0-100, plus a short current-stage label.
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    stage: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -93,6 +96,9 @@ class Flashcard(Base):
     )
     question: Mapped[str] = mapped_column(Text)
     answer: Mapped[str] = mapped_column(Text)
+    # Which generation this card belongs to (1-based). Each "Generate new set"
+    # creates the next set; the UI shows one set at a time.
+    set_index: Mapped[int] = mapped_column(Integer, default=1, index=True)
 
     topic: Mapped["Topic"] = relationship(back_populates="flashcards")
 
@@ -106,7 +112,11 @@ class QuizQuestion(Base):
     )
     question: Mapped[str] = mapped_column(Text)
     options: Mapped[list] = mapped_column(JSON)  # list[str]
-    correct_index: Mapped[int] = mapped_column(Integer)
+    # 0-based indices of the correct option(s). Length 1 = single answer;
+    # length >= 2 = "select all that apply" (SATA).
+    correct_indices: Mapped[list] = mapped_column(JSON)  # list[int]
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which generation this question belongs to (1-based); one set = one quiz.
+    set_index: Mapped[int] = mapped_column(Integer, default=1, index=True)
 
     topic: Mapped["Topic"] = relationship(back_populates="quiz_questions")

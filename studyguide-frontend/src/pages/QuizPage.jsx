@@ -3,51 +3,62 @@ import { useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Check, X, Shuffle, Plus, Loader2 } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
-import { BackLink, PageTitle, SkeletonLines, Card, Button } from '../components/ui'
+import { BackLink, PageTitle, SkeletonLines, Card, Button, SetSwitcher } from '../components/ui'
 import { getTopic, getQuiz, scoreQuiz, generateMoreQuiz } from '../services/apiService'
 import { shuffle } from '../utils/shuffle'
+import { setNumbers } from '../utils/sets'
 
-const ROUND_SIZE = 5
+const questionsInSet = (all, n) => all.filter((q) => (q.set_index || 1) === n)
 
-// Build a playable round: a shuffled sample of the bank, with each question's
-// answer options shuffled too. `optionMap[displayedIndex] = originalIndex` lets
-// us translate the user's choice back to the server's option index for scoring.
-function buildRound(bank, size = ROUND_SIZE) {
-  return shuffle(bank)
-    .slice(0, size)
-    .map((q) => {
-      const order = shuffle(q.options.map((_, i) => i))
-      return {
-        id: q.id,
-        question: q.question,
-        explanation: q.explanation,
-        options: order.map((i) => q.options[i]),
-        correct_index: order.indexOf(q.correct_index),
-        optionMap: order,
-      }
-    })
+// Build a playable round from one set's questions: question order shuffled, and
+// each question's options shuffled too. `optionMap[displayedIndex] = originalIndex`
+// translates the user's choice back to the server's option index for scoring.
+// `correctSet` holds the correct option(s) in DISPLAYED-index space; questions
+// with more than one are "select all that apply" (SATA).
+function buildRound(items) {
+  return shuffle(items).map((q) => {
+    const order = shuffle(q.options.map((_, i) => i))
+    const correctSet = (q.correct_indices || []).map((ci) => order.indexOf(ci))
+    return {
+      id: q.id,
+      question: q.question,
+      explanation: q.explanation,
+      options: order.map((i) => q.options[i]),
+      correctSet,
+      isMulti: correctSet.length > 1,
+      optionMap: order,
+    }
+  })
 }
 
 export default function QuizPage() {
   const { topicId } = useParams()
   const [topic, setTopic] = useState(null)
-  const [bank, setBank] = useState([])
-  const [round, setRound] = useState([])
-  const [answers, setAnswers] = useState({}) // qId -> displayed option index
+  const [bank, setBank] = useState([])       // every question across all sets
+  const [activeSet, setActiveSet] = useState(1)
+  const [round, setRound] = useState([])     // the active set, shuffled & playable
+  const [answers, setAnswers] = useState({}) // qId -> array of displayed option indices
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
 
+  // Load all questions and open the newest set as a fresh round.
+  function openNewest(all) {
+    const sets = setNumbers(all)
+    const newest = sets[sets.length - 1] || 1
+    setBank(all)
+    setActiveSet(newest)
+    setRound(buildRound(questionsInSet(all, newest)))
+    setAnswers({})
+    setResult(null)
+  }
+
   useEffect(() => {
     let active = true
     getTopic(topicId).then((t) => active && setTopic(t)).catch(() => {})
     getQuiz(topicId)
-      .then((d) => {
-        if (!active) return
-        setBank(d)
-        setRound(buildRound(d))
-      })
+      .then((d) => active && openNewest(d))
       .catch(() => active && setError('Could not generate a quiz. Is the Groq API key set?'))
       .finally(() => active && setLoading(false))
     return () => {
@@ -60,15 +71,23 @@ export default function QuizPage() {
     const payload = {}
     for (const [qid, displayed] of Object.entries(answers)) {
       const q = round.find((x) => String(x.id) === String(qid))
-      payload[qid] = q ? q.optionMap[displayed] : displayed
+      payload[qid] = (displayed || []).map((d) => (q ? q.optionMap[d] : d))
     }
     const res = await scoreQuiz(topicId, payload)
     setResult(res)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  function selectSet(n) {
+    setActiveSet(n)
+    setRound(buildRound(questionsInSet(bank, n)))
+    setAnswers({})
+    setResult(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   function newMix() {
-    setRound(buildRound(bank))
+    setRound(buildRound(questionsInSet(bank, activeSet)))
     setAnswers({})
     setResult(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -77,11 +96,7 @@ export default function QuizPage() {
   async function doGenerateMore() {
     setGenerating(true)
     try {
-      const all = await generateMoreQuiz(topicId)
-      setBank(all)
-      setRound(buildRound(all))
-      setAnswers({})
-      setResult(null)
+      openNewest(await generateMoreQuiz(topicId))
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch {
       setError('Could not generate more questions. Is the Groq API key set?')
@@ -90,7 +105,7 @@ export default function QuizPage() {
     }
   }
 
-  const allAnswered = round.length > 0 && Object.keys(answers).length === round.length
+  const allAnswered = round.length > 0 && round.every((q) => (answers[q.id] || []).length > 0)
 
   return (
     <PageTransition>
@@ -98,7 +113,7 @@ export default function QuizPage() {
       <PageTitle
         overline="Quiz"
         title={topic?.title || 'Loading…'}
-        subtitle={bank.length ? `${round.length} questions · drawn from a bank of ${bank.length}` : undefined}
+        subtitle={round.length ? `Set ${activeSet} of ${setNumbers(bank).length} · ${round.length} questions` : undefined}
       />
 
       {loading ? (
@@ -107,6 +122,7 @@ export default function QuizPage() {
         <Card><div style={{ color: 'var(--danger)' }}>{error}</div></Card>
       ) : (
         <>
+          <SetSwitcher sets={setNumbers(bank)} active={activeSet} onSelect={selectSet} />
           {result && (
             <ScoreBanner
               result={result}
@@ -119,14 +135,19 @@ export default function QuizPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {round.map((q, qi) => (
               <Card key={`${q.id}-${qi}`}>
-                <div style={{ fontFamily: 'var(--serif)', fontSize: 18, color: 'var(--text-dark)', marginBottom: 16 }}>
+                <div style={{ fontFamily: 'var(--serif)', fontSize: 18, color: 'var(--text-dark)', marginBottom: q.isMulti ? 6 : 16 }}>
                   {qi + 1}. {q.question}
                 </div>
+                {q.isMulti && (
+                  <div style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--primary-dark)', marginBottom: 14 }}>
+                    Select all that apply
+                  </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {q.options.map((opt, oi) => {
-                    const selected = answers[q.id] === oi
+                    const selected = (answers[q.id] || []).includes(oi)
                     const graded = result?.results[q.id] !== undefined
-                    const isCorrect = oi === q.correct_index
+                    const isCorrect = q.correctSet.includes(oi)
                     let border = 'var(--border)'
                     let bg = 'var(--bg-card)'
                     if (graded) {
@@ -135,13 +156,22 @@ export default function QuizPage() {
                     } else if (selected) {
                       border = 'var(--primary)'; bg = 'var(--primary-light)'
                     }
+                    const toggle = () => {
+                      if (result) return
+                      setAnswers((a) => {
+                        const cur = a[q.id] || []
+                        if (!q.isMulti) return { ...a, [q.id]: [oi] }
+                        const next = cur.includes(oi) ? cur.filter((x) => x !== oi) : [...cur, oi]
+                        return { ...a, [q.id]: next }
+                      })
+                    }
                     return (
                       <motion.div
                         key={oi}
                         initial={{ opacity: 0, x: -8 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: oi * 0.05 }}
-                        onClick={() => !result && setAnswers((a) => ({ ...a, [q.id]: oi }))}
+                        onClick={toggle}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -154,6 +184,21 @@ export default function QuizPage() {
                           fontSize: 14.5,
                         }}
                       >
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            width: 18,
+                            height: 18,
+                            borderRadius: q.isMulti ? 5 : '50%',
+                            border: `1.5px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
+                            background: selected ? 'var(--primary)' : 'transparent',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {selected && <Check size={12} color="#fff" />}
+                        </span>
                         <span style={{ flex: 1 }}>{opt}</span>
                         {graded && isCorrect && <Check size={17} color="var(--success)" />}
                         {graded && selected && !isCorrect && <X size={17} color="var(--danger)" />}
@@ -229,7 +274,7 @@ function ScoreBanner({ result, onNewMix, onGenerateMore, generating }) {
         </Button>
         <Button variant="ghost" onClick={onGenerateMore} disabled={generating} style={{ color: 'var(--primary-dark)', opacity: generating ? 0.7 : 1 }}>
           {generating ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Plus size={16} />}
-          {generating ? 'Generating…' : 'Generate more'}
+          {generating ? 'Generating…' : 'Generate new set'}
         </Button>
       </div>
     </motion.div>
